@@ -1,0 +1,6 @@
+{
+  "name": "MavunoSense AI",
+  "description": "Lacuna Fund Prototype: AI-driven maize drought and crop stress early warning system for Uasin Gishu and Trans Nzoia counties in Kenya.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
