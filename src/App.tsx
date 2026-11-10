@@ -43,9 +43,26 @@ import {
   Radio,
   ExternalLink,
   Menu,
-  X
+  X,
+  Award,
+  Settings,
+  Key,
+  UserCheck,
+  Lock,
+  Building2,
+  LogOut,
+  Globe,
+  Compass,
+  Eye,
+  EyeOff,
+  Maximize2,
+  Mountain
 } from 'lucide-react';
 import L from 'leaflet';
+import AuthModal, { UserProfile } from './components/AuthModal';
+import ImpactMetricsView from './components/ImpactMetricsView';
+import UserManagementView from './components/UserManagementView';
+import SystemAdminView from './components/SystemAdminView';
 
 // Types
 interface Ward {
@@ -128,7 +145,7 @@ const TILE_PROVIDERS: Record<'osm' | 'satellite' | 'canvas', { name: string; url
   },
 };
 
-const COUNTY_BOUNDS: Record<'all' | '026' | '027', [[number, number], [number, number]]> = {
+const COUNTY_BOUNDS: Record<'all' | '026' | '027' | 'kenya', [[number, number], [number, number]]> = {
   all: [
     [0.20, 34.68],
     [1.28, 35.68],
@@ -141,12 +158,32 @@ const COUNTY_BOUNDS: Record<'all' | '026' | '027', [[number, number], [number, n
     [0.22, 34.90],
     [0.93, 35.65],
   ],
+  kenya: [ // Full Republic of Kenya national bounds
+    [-4.7, 33.9],
+    [4.6, 41.9],
+  ],
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'map' | 'telemetry' | 'simulator' | 'sms' | 'bias' | 'mcp' | 'python'>('map');
+  const [activeTab, setActiveTab] = useState<'map' | 'telemetry' | 'simulator' | 'sms' | 'impact' | 'users' | 'admin' | 'bias' | 'mcp' | 'python'>('map');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Authentication State with Active Profile
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>({
+    id: 'usr-001',
+    email: 'admin@mavunosense.org',
+    full_name: 'Dr. David Kipkemboi',
+    role: 'SUPER_ADMIN',
+    role_title: 'National Agricultural Lead',
+    county_code: 'ALL',
+    county_name: 'Trans Nzoia & Uasin Gishu',
+    organization: 'Ministry of Agriculture & Livestock Dev / KALRO',
+    phone_number: '+254 722 410 890',
+    status: 'ACTIVE',
+    last_login_at: '2026-03-18 08:30 EAT',
+  });
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
 
   // Wards & fields state
   const [wards, setWards] = useState<Ward[]>([]);
@@ -201,6 +238,13 @@ export default function App() {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const leafletMapRef = useRef<L.Map | null>(null);
   const geojsonLayerRef = useRef<L.GeoJSON | null>(null);
+  const markersLayerRef = useRef<L.LayerGroup | null>(null);
+
+  // Kenya Map & 3D Perspective Contextualization State
+  const [showPinsOnMap, setShowPinsOnMap] = useState<boolean>(true);
+  const [showKenyaContextInset, setShowKenyaContextInset] = useState<boolean>(true);
+  const [showTerrain3DModal, setShowTerrain3DModal] = useState<boolean>(false);
+  const [selected3DWardId, setSelected3DWardId] = useState<number>(1);
 
   // Initial Data Fetch
   useEffect(() => {
@@ -326,18 +370,37 @@ export default function App() {
     }
   };
 
-  // Render Ward Polygons on the Map
+  // Quick Zoom Navigators for Kenya Context
+  const zoomToKenyaOverview = () => {
+    if (leafletMapRef.current) {
+      leafletMapRef.current.flyToBounds(COUNTY_BOUNDS.kenya, { duration: 1.5 });
+    }
+  };
+
+  const zoomToNorthRift = () => {
+    if (leafletMapRef.current) {
+      leafletMapRef.current.flyToBounds(COUNTY_BOUNDS.all, { padding: [30, 30], duration: 1.2 });
+    }
+  };
+
+  // Render Ward Polygons & Realized Pin-Points on the Map
   useEffect(() => {
     if (!leafletMapRef.current || wards.length === 0) return;
     const map = leafletMapRef.current;
 
+    // Clean previous layers
     if (geojsonLayerRef.current) {
       map.removeLayer(geojsonLayerRef.current);
+    }
+    if (markersLayerRef.current) {
+      map.removeLayer(markersLayerRef.current);
+      markersLayerRef.current = null;
     }
 
     fetch('/api/v1/map/wards')
       .then((res) => res.json())
       .then((geojson) => {
+        // 1. Render Polygons
         geojsonLayerRef.current = L.geoJSON(geojson, {
           filter: (feature) => {
             if (countyFilter === 'all') return true;
@@ -364,7 +427,7 @@ export default function App() {
             layer.bindTooltip(
               `<div class="text-xs p-1">
                 <div class="font-bold text-slate-900">${p.name} Ward</div>
-                <div class="text-slate-600">${p.county_name} · ${p.risk_tier}</div>
+                <div class="text-slate-600">${p.county_name} (${p.county_code}) · ${p.risk_tier}</div>
                 <div class="text-slate-900 font-semibold mt-0.5">Stress: ${p.stress_score}/100</div>
                 <div class="text-amber-700">Rain Deficit: ${p.rainfall_deficit_pct}%</div>
               </div>`,
@@ -383,11 +446,137 @@ export default function App() {
           },
         }).addTo(map);
 
+        // 2. Render Pin-Points for Wards & Strategic Kenya Landmarks
+        if (showPinsOnMap) {
+          const markersGroup = L.layerGroup();
+
+          filteredWards.forEach((ward) => {
+            const lat = ward.centroid_lat;
+            const lon = ward.centroid_lon;
+            const score = ward.current_stress_score ?? 0;
+            const isSelected = selectedWard?.id === ward.id;
+
+            let badgeBg = 'bg-emerald-600 text-white border-emerald-700';
+            let pinPoint = 'bg-emerald-600';
+            if (score >= 70) {
+              badgeBg = 'bg-red-600 text-white border-red-700 ring-2 ring-red-400/50 animate-pulse';
+              pinPoint = 'bg-red-600';
+            } else if (score >= 50) {
+              badgeBg = 'bg-amber-500 text-white border-amber-600';
+              pinPoint = 'bg-amber-500';
+            } else if (score >= 30) {
+              badgeBg = 'bg-blue-600 text-white border-blue-700';
+              pinPoint = 'bg-blue-600';
+            }
+
+            const icon = L.divIcon({
+              className: 'mavuno-ward-pin',
+              html: `
+                <div style="transform: translate(-50%, -100%);" class="cursor-pointer group flex flex-col items-center select-none">
+                  <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold shadow-lg border-2 ${badgeBg} whitespace-nowrap transition-transform duration-200 group-hover:scale-110 ${
+                    isSelected ? 'ring-4 ring-slate-900/50 scale-105' : ''
+                  }">
+                    <span class="w-1.5 h-1.5 rounded-full bg-white shrink-0"></span>
+                    <span>${ward.name}</span>
+                    <span class="text-[9px] bg-black/25 px-1 py-0.2 rounded font-mono">${Math.round(score)}</span>
+                  </div>
+                  <div class="w-2.5 h-2.5 rotate-45 -mt-1 shadow-sm ${pinPoint}"></div>
+                </div>
+              `,
+              iconSize: [0, 0],
+              iconAnchor: [0, 0],
+            });
+
+            const marker = L.marker([lat, lon], { icon }).addTo(markersGroup);
+            marker.on('click', () => {
+              setSelectedWard(ward);
+              setSmsTargetWardId(ward.id);
+            });
+
+            marker.bindTooltip(
+              `<div class="p-1.5 text-xs">
+                <div class="font-bold text-slate-900">${ward.name} Ward · ${ward.county_name} (${ward.county_code})</div>
+                <div class="text-slate-600">${ward.sub_county} Sub-County</div>
+                <div class="font-semibold text-slate-900 mt-1">Drought Stress: ${ward.current_stress_score}/100 (${ward.current_risk_tier})</div>
+                <div class="text-slate-600">Rainfall Deficit: ${ward.rainfall_deficit_pct}% · Monitored: ${ward.fields_monitored.toLocaleString()} parcels</div>
+                <div class="text-[10px] text-emerald-700 font-semibold mt-0.5">Click to inspect field telemetry</div>
+              </div>`,
+              { offset: [0, -20] }
+            );
+          });
+
+          // Regional Anchor Landmarks (Kenya Geographical Context)
+          const LANDMARKS = [
+            {
+              name: 'Kitale Hub (026 HQ)',
+              type: 'NCPB Strategic Grain Silos',
+              county: 'Trans Nzoia',
+              lat: 1.016,
+              lon: 35.008,
+              icon: '🏛️',
+            },
+            {
+              name: 'Eldoret Hub (027 HQ)',
+              type: 'Industrial Grain Silos & Millers',
+              county: 'Uasin Gishu',
+              lat: 0.514,
+              lon: 35.269,
+              icon: '🏛️',
+            },
+            {
+              name: 'Mount Elgon (4,321m)',
+              type: 'Volcanic Watershed Slopes',
+              county: 'Trans Nzoia Border',
+              lat: 1.140,
+              lon: 34.620,
+              icon: '⛰️',
+            },
+            {
+              name: 'Cherangany Hills (3,581m)',
+              type: 'Water Tower Catchment',
+              county: 'Trans Nzoia / Marakwet Border',
+              lat: 1.250,
+              lon: 35.320,
+              icon: '⛰️',
+            },
+          ];
+
+          LANDMARKS.forEach((lm) => {
+            const lmIcon = L.divIcon({
+              className: 'mavuno-landmark-pin',
+              html: `
+                <div style="transform: translate(-50%, -100%);" class="cursor-pointer group flex flex-col items-center select-none">
+                  <div class="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-900 text-white border border-slate-700 shadow-md whitespace-nowrap transition-transform duration-200 group-hover:scale-105">
+                    <span>${lm.icon}</span>
+                    <span>${lm.name}</span>
+                  </div>
+                  <div class="w-1.5 h-1.5 rotate-45 -mt-1 bg-slate-900"></div>
+                </div>
+              `,
+              iconSize: [0, 0],
+              iconAnchor: [0, 0],
+            });
+
+            const lmMarker = L.marker([lm.lat, lm.lon], { icon: lmIcon }).addTo(markersGroup);
+            lmMarker.bindTooltip(
+              `<div class="p-1.5 text-xs">
+                <div class="font-bold text-slate-900">${lm.name}</div>
+                <div class="text-slate-600">${lm.type} · ${lm.county}</div>
+                <div class="text-[10px] text-emerald-700 font-semibold mt-0.5">North Rift Valley Geographic Anchor</div>
+              </div>`,
+              { offset: [0, -16] }
+            );
+          });
+
+          markersGroup.addTo(map);
+          markersLayerRef.current = markersGroup;
+        }
+
         if (tileLayerRef.current) {
           geojsonLayerRef.current.bringToFront();
         }
       });
-  }, [wards, countyFilter, selectedWard, mapTileStyle]);
+  }, [wards, countyFilter, selectedWard, mapTileStyle, showPinsOnMap]);
 
   // Run ML Prediction
   const runSimulatorInference = () => {
@@ -543,6 +732,20 @@ export default function App() {
       description: 'Localized Swahili & English Dispatches',
     },
     {
+      id: 'impact' as const,
+      label: 'Impact & Reach Metrics',
+      icon: Award,
+      badge: 'Core KPI',
+      description: 'Lacuna Fund Outreach, Precision & Milestones',
+    },
+    {
+      id: 'users' as const,
+      label: 'User Management',
+      icon: Users,
+      badge: 'RBAC',
+      description: 'Manage Stakeholder Accounts, Roles & Access',
+    },
+    {
       id: 'bias' as const,
       label: 'Equity & Bias Matrix',
       icon: ShieldCheck,
@@ -566,7 +769,325 @@ export default function App() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-[#1E293B] flex font-['Plus_Jakarta_Sans',sans-serif]">
+    <>
+      {/* BUILT-IN AUTHENTICATION & MODEL LOGIN SCREEN */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => {
+          setShowAuthModal(false);
+          setTimeout(() => leafletMapRef.current?.invalidateSize(), 150);
+        }}
+        currentUser={currentUser}
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+          setShowAuthModal(false);
+          setTimeout(() => leafletMapRef.current?.invalidateSize(), 150);
+        }}
+      />
+
+      {/* 3D RADAR TERRAIN PERSPECTIVE MODAL (Referencing attached image_02568cc6.png) */}
+      {showTerrain3DModal && (
+        <div
+          className="fixed inset-0 z-[100000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 overflow-y-auto"
+          onClick={() => setShowTerrain3DModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-5xl w-full border border-slate-200 shadow-2xl overflow-hidden flex flex-col my-auto animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-700 text-white flex items-center justify-center shadow-xs">
+                  <Compass className="w-5 h-5 animate-spin-slow" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-slate-900">
+                      3D Agro-Telemetry Radar Perspective
+                    </h3>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 font-semibold px-2 py-0.5 rounded-full border border-emerald-200">
+                      Sentinel-1 SAR C-Band
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Realized topographic context · Trans Nzoia & Uasin Gishu Counties, Kenya
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowTerrain3DModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-200/60 transition-colors"
+                title="Close 3D Perspective"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body: 3D Disc Visual with Interactive Pin-points & Agro-Ecological Profiler */}
+            <div className="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Column: 3D Terrain Disc with Pin-Points (from image_02568cc6.png) */}
+              <div className="lg:col-span-7 flex flex-col items-center justify-center">
+                <div className="relative w-full rounded-2xl border-2 border-slate-200/90 bg-slate-50 p-3 shadow-inner overflow-hidden group">
+                  {/* The circular 3D terrain disc image directly embedded */}
+                  <img
+                    src="/assets/aistudio/image_02568cc6.png"
+                    alt="Kenyan Agricultural 3D Terrain Radar Disc"
+                    className="w-full h-auto object-contain max-h-[380px] rounded-xl select-none mx-auto drop-shadow-md"
+                  />
+
+                  {/* Realized Ward Pin-Point Hotspots mapped onto the 3D Disc Topography */}
+                  {/* Cherangany (Highland slope - top right) */}
+                  <button
+                    onClick={() => setSelected3DWardId(1)}
+                    className="absolute top-[28%] right-[24%] -translate-x-1/2 -translate-y-1/2 group/pin cursor-pointer"
+                    title="Cherangany Ward · Highland Terraced Slope"
+                  >
+                    <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-md flex items-center gap-1 transition-transform ${
+                      selected3DWardId === 1
+                        ? 'bg-red-600 text-white border-red-700 scale-110 ring-4 ring-red-400/50'
+                        : 'bg-white/95 text-slate-900 border-slate-300 hover:scale-105'
+                    }`}>
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
+                      <span>Cherangany</span>
+                    </div>
+                  </button>
+
+                  {/* Endebess (Mt. Elgon Foothills - top left) */}
+                  <button
+                    onClick={() => setSelected3DWardId(4)}
+                    className="absolute top-[22%] left-[28%] -translate-x-1/2 -translate-y-1/2 group/pin cursor-pointer"
+                    title="Endebess Ward · Mt Elgon volcanic slope"
+                  >
+                    <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-md flex items-center gap-1 transition-transform ${
+                      selected3DWardId === 4
+                        ? 'bg-amber-600 text-white border-amber-700 scale-110 ring-4 ring-amber-400/50'
+                        : 'bg-white/95 text-slate-900 border-slate-300 hover:scale-105'
+                    }`}>
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                      <span>Endebess</span>
+                    </div>
+                  </button>
+
+                  {/* Saboti (Lower Mt Elgon slopes - mid left) */}
+                  <button
+                    onClick={() => setSelected3DWardId(2)}
+                    className="absolute top-[48%] left-[20%] -translate-x-1/2 -translate-y-1/2 group/pin cursor-pointer"
+                    title="Saboti Ward · Coffee & Maize belt"
+                  >
+                    <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-md flex items-center gap-1 transition-transform ${
+                      selected3DWardId === 2
+                        ? 'bg-amber-500 text-white border-amber-600 scale-110 ring-4 ring-amber-300/50'
+                        : 'bg-white/95 text-slate-900 border-slate-300 hover:scale-105'
+                    }`}>
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                      <span>Saboti</span>
+                    </div>
+                  </button>
+
+                  {/* Kiminini (Trans Nzoia southern fertile basin - center left) */}
+                  <button
+                    onClick={() => setSelected3DWardId(3)}
+                    className="absolute top-[44%] left-[45%] -translate-x-1/2 -translate-y-1/2 group/pin cursor-pointer"
+                    title="Kiminini Ward · Fertile Grain Basin"
+                  >
+                    <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-md flex items-center gap-1 transition-transform ${
+                      selected3DWardId === 3
+                        ? 'bg-blue-600 text-white border-blue-700 scale-110 ring-4 ring-blue-400/50'
+                        : 'bg-white/95 text-slate-900 border-slate-300 hover:scale-105'
+                    }`}>
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                      <span>Kiminini</span>
+                    </div>
+                  </button>
+
+                  {/* Soy & Turbo (Uasin Gishu Northern Plains - center) */}
+                  <button
+                    onClick={() => setSelected3DWardId(7)}
+                    className="absolute top-[52%] left-[62%] -translate-x-1/2 -translate-y-1/2 group/pin cursor-pointer"
+                    title="Soy Ward · Central Maize Plains"
+                  >
+                    <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-md flex items-center gap-1 transition-transform ${
+                      selected3DWardId === 7
+                        ? 'bg-amber-600 text-white border-amber-700 scale-110 ring-4 ring-amber-400/50'
+                        : 'bg-white/95 text-slate-900 border-slate-300 hover:scale-105'
+                    }`}>
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                      <span>Soy</span>
+                    </div>
+                  </button>
+
+                  {/* Moiben (Uasin Gishu Highland Plateau - mid right) */}
+                  <button
+                    onClick={() => setSelected3DWardId(8)}
+                    className="absolute top-[58%] right-[16%] -translate-x-1/2 -translate-y-1/2 group/pin cursor-pointer"
+                    title="Moiben Ward · Wheat & Large-Scale Maize"
+                  >
+                    <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-md flex items-center gap-1 transition-transform ${
+                      selected3DWardId === 8
+                        ? 'bg-red-600 text-white border-red-700 scale-110 ring-4 ring-red-400/50'
+                        : 'bg-white/95 text-slate-900 border-slate-300 hover:scale-105'
+                    }`}>
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                      <span>Moiben</span>
+                    </div>
+                  </button>
+
+                  {/* Kapseret & Kesses (Southern Plains near Eldoret - bottom center) */}
+                  <button
+                    onClick={() => setSelected3DWardId(10)}
+                    className="absolute bottom-[16%] left-[52%] -translate-x-1/2 -translate-y-1/2 group/pin cursor-pointer"
+                    title="Kapseret Ward · Eldoret Peri-Urban"
+                  >
+                    <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-md flex items-center gap-1 transition-transform ${
+                      selected3DWardId === 10
+                        ? 'bg-blue-600 text-white border-blue-700 scale-110 ring-4 ring-blue-400/50'
+                        : 'bg-white/95 text-slate-900 border-slate-300 hover:scale-105'
+                    }`}>
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                      <span>Kapseret</span>
+                    </div>
+                  </button>
+
+                  {/* Radar Scanning Line indicator */}
+                  <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-xs px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-800 border border-slate-200">
+                    📡 Sentinel-1 C-Band SAR Polygons
+                  </div>
+                  <div className="absolute bottom-3 right-3 bg-white/90 backdrop-blur-xs px-2.5 py-1 rounded-md text-[10px] font-semibold text-emerald-800 border border-emerald-200">
+                    Terrain Disc: Lacuna Zenodo 11060871
+                  </div>
+                </div>
+
+                <div className="w-full mt-3 flex items-center justify-between text-[11px] text-slate-500 px-1">
+                  <span>Pin-points reflect actual agro-ecological topography in Kenya</span>
+                  <span className="text-emerald-700 font-semibold">Click any pin above to inspect telemetry</span>
+                </div>
+              </div>
+
+              {/* Right Column: Ward Telemetry & Geographic Perspective */}
+              <div className="lg:col-span-5 flex flex-col justify-between space-y-4">
+                {(() => {
+                  const ward = wards.find((w) => w.id === selected3DWardId) || wards[0];
+                  if (!ward) return null;
+
+                  return (
+                    <div className="space-y-3.5">
+                      <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+                            {ward.county_name} County ({ward.county_code})
+                          </span>
+                          <span className="text-xs font-bold text-slate-500">
+                            Sub-County: {ward.sub_county}
+                          </span>
+                        </div>
+                        <h4 className="text-xl font-bold text-slate-900 mt-1">
+                          {ward.name} Ward
+                        </h4>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                            ward.current_stress_score >= 70
+                              ? 'bg-red-100 text-red-800'
+                              : ward.current_stress_score >= 50
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-emerald-100 text-emerald-800'
+                          }`}>
+                            {ward.current_risk_tier} ({ward.current_stress_score}/100)
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            Rain Deficit: {ward.rainfall_deficit_pct}%
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Topographic & Agro-Ecological Perspective */}
+                      <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-2 text-xs">
+                        <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                          <Mountain className="w-4 h-4 text-emerald-600" />
+                          <span>Realized Agro-Ecological Perspective</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-[11px]">
+                          <div className="bg-slate-50 p-2 rounded border border-slate-100">
+                            <span className="text-slate-500 block">Elevation Profile:</span>
+                            <span className="font-bold text-slate-900">
+                              {ward.county_code === '026' ? '1,850m – 3,200m' : '2,050m – 2,400m'}
+                            </span>
+                          </div>
+                          <div className="bg-slate-50 p-2 rounded border border-slate-100">
+                            <span className="text-slate-500 block">Soil Classification:</span>
+                            <span className="font-bold text-slate-900">
+                              {ward.county_code === '026' ? 'Humic Nitisols' : 'Rhodic Ferralsols'}
+                            </span>
+                          </div>
+                          <div className="bg-slate-50 p-2 rounded border border-slate-100">
+                            <span className="text-slate-500 block">Monitored Fields:</span>
+                            <span className="font-bold text-slate-900">
+                              {ward.fields_monitored.toLocaleString()} parcels
+                            </span>
+                          </div>
+                          <div className="bg-slate-50 p-2 rounded border border-slate-100">
+                            <span className="text-slate-500 block">Smallholder Ratio:</span>
+                            <span className="font-bold text-emerald-700">
+                              {ward.smallholder_percentage}% (&lt; 2 ha)
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed pt-1 border-t border-slate-100">
+                          Sentinel-1 radar penetrates seasonal cloud blankets over {ward.name}, tracking canopy volume scattering while CHIRPS detects moisture anomalies 17.5 days pre-wilting.
+                        </p>
+                      </div>
+
+                      {/* Action to Fly to this Ward on the Leaflet GIS Map */}
+                      <button
+                        onClick={() => {
+                          setSelectedWard(ward);
+                          setSmsTargetWardId(ward.id);
+                          setShowTerrain3DModal(false);
+                          if (leafletMapRef.current) {
+                            leafletMapRef.current.flyTo([ward.centroid_lat, ward.centroid_lon], 11, { duration: 1.2 });
+                          }
+                        }}
+                        className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 text-xs cursor-pointer"
+                      >
+                        <MapPin className="w-4 h-4" />
+                        <span>Locate & Zoom to {ward.name} on Kenya GIS Map</span>
+                      </button>
+                    </div>
+                  );
+                })()}
+
+                {/* Ward Quick Selector Chips */}
+                <div className="pt-2 border-t border-slate-200">
+                  <div className="text-[11px] font-semibold text-slate-500 mb-1.5">
+                    Select Any Ward across Trans Nzoia & Uasin Gishu:
+                  </div>
+                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                    {wards.map((w) => (
+                      <button
+                        key={w.id}
+                        onClick={() => setSelected3DWardId(w.id)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                          selected3DWardId === w.id
+                            ? 'bg-slate-900 text-white font-bold'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        }`}
+                      >
+                        {w.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div
+        className={`min-h-screen bg-[#F8FAFC] text-[#1E293B] flex font-['Plus_Jakarta_Sans',sans-serif] ${
+          showAuthModal ? 'hidden' : ''
+        }`}
+      >
       {/* Mobile Backdrop */}
       {mobileMenuOpen && (
         <div
@@ -657,6 +1178,51 @@ export default function App() {
           })}
         </div>
 
+        {/* BOTTOM LEFT CORNER: SYSTEM ADMINISTRATION & SETTINGS MODULE */}
+        <div className="p-3 border-t border-slate-200 bg-slate-50/70">
+          <button
+            onClick={() => {
+              setActiveTab('admin');
+              setMobileMenuOpen(false);
+            }}
+            title="System Administration & Settings (RBAC Security Matrix & Runtime Config)"
+            className={`w-full rounded-xl flex items-center transition-all ${
+              sidebarCollapsed ? 'justify-center p-2.5' : 'px-3 py-2.5 justify-between'
+            } text-xs ${
+              activeTab === 'admin'
+                ? 'bg-purple-700 text-white font-bold shadow-xs ring-2 ring-purple-600/30'
+                : 'bg-white hover:bg-slate-100 text-slate-800 hover:text-slate-900 font-bold border border-slate-200 shadow-2xs'
+            }`}
+          >
+            <div className={`flex items-center gap-2.5 ${sidebarCollapsed ? 'justify-center' : 'min-w-0'}`}>
+              <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
+                activeTab === 'admin' ? 'bg-purple-800 text-white' : 'bg-purple-50 text-purple-700 border border-purple-200'
+              }`}>
+                <Settings className="w-3.5 h-3.5" />
+              </div>
+              {!sidebarCollapsed && (
+                <div className="truncate text-left">
+                  <div className="truncate leading-tight text-xs">System Administration</div>
+                  <div className={`text-[10px] font-normal truncate ${activeTab === 'admin' ? 'text-purple-200' : 'text-slate-500'}`}>
+                    Privilege Security Matrix
+                  </div>
+                </div>
+              )}
+            </div>
+            {!sidebarCollapsed && (
+              <span
+                className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ml-1 shrink-0 ${
+                  activeTab === 'admin'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-purple-100 text-purple-800 border border-purple-200'
+                }`}
+              >
+                RBAC
+              </span>
+            )}
+          </button>
+        </div>
+
         {/* Sidebar Footer Context */}
         <div className={`p-4 border-t border-slate-100 bg-slate-50/50 ${sidebarCollapsed ? 'text-center' : 'space-y-3'}`}>
           {!sidebarCollapsed ? (
@@ -725,29 +1291,75 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-slate-400 hidden sm:inline">MavunoSense AI /</span>
                 <h2 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight">
-                  {NAV_ITEMS.find((item) => item.id === activeTab)?.label}
+                  {activeTab === 'admin'
+                    ? 'System Administration & Settings'
+                    : NAV_ITEMS.find((item) => item.id === activeTab)?.label}
                 </h2>
               </div>
               <p className="text-[11px] text-slate-500 hidden sm:block">
-                {NAV_ITEMS.find((item) => item.id === activeTab)?.description} · North Rift Valley, Kenya
+                {activeTab === 'admin'
+                  ? 'Privilege Security Matrix (RBAC), Satellite Ingestion & KDPA 2019'
+                  : NAV_ITEMS.find((item) => item.id === activeTab)?.description} · North Rift Valley, Kenya
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="text-slate-500 hidden md:inline font-medium">Season:</span>
-              <span className="bg-white text-slate-800 font-semibold px-2.5 py-1 rounded-md border border-slate-200 shadow-2xs text-[11px]">
+            {/* Season Badge */}
+            <div className="hidden xl:flex items-center gap-2">
+              <span className="text-slate-500 font-medium">Season:</span>
+              <span className="bg-white text-slate-800 font-semibold px-2 py-0.5 rounded-md border border-slate-200 shadow-2xs text-[11px]">
                 2026 Long Rains
               </span>
-            </div>
-            <span className="hidden sm:inline text-slate-300">|</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-slate-500 hidden md:inline font-medium">Crop:</span>
               <span className="bg-emerald-50 text-emerald-800 font-semibold px-2 py-0.5 rounded border border-emerald-200 text-[11px]">
                 Maize Only
               </span>
             </div>
+
+            <span className="hidden xl:inline text-slate-200">|</span>
+
+            {/* Active Authenticated User Profile Pill (1-Click Switcher) */}
+            <div
+              onClick={() => setShowAuthModal(true)}
+              className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50/80 hover:bg-slate-100/90 cursor-pointer transition-colors shadow-2xs"
+              title="Click to switch trial persona or sign in with credentials"
+            >
+              <div className="w-6 h-6 rounded-lg bg-emerald-600 text-white font-bold text-[10px] flex items-center justify-center shrink-0 shadow-2xs">
+                {currentUser?.full_name ? currentUser.full_name.charAt(0) : 'A'}
+              </div>
+              <div className="hidden md:block text-left">
+                <div className="font-bold text-slate-900 text-[11px] leading-tight truncate max-w-[120px]">
+                  {currentUser?.full_name || 'Guest User'}
+                </div>
+                <div className="text-[10px] text-slate-500 truncate max-w-[120px]">
+                  {currentUser?.organization || 'Stakeholder'}
+                </div>
+              </div>
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-200 uppercase tracking-tight shrink-0">
+                {currentUser?.role?.replace('_', ' ') || 'GUEST'}
+              </span>
+            </div>
+
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="py-1.5 px-3 bg-slate-900 hover:bg-black text-white rounded-lg text-xs font-semibold shadow-2xs transition-colors flex items-center gap-1.5 shrink-0"
+              title="Open model login screen"
+            >
+              <Key className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Login Screen</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setCurrentUser(null);
+                setShowAuthModal(true);
+              }}
+              className="py-1.5 px-2.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium shadow-2xs transition-colors flex items-center gap-1 shrink-0"
+              title="Sign out & view login screen"
+            >
+              <LogOut className="w-3.5 h-3.5 text-slate-500" />
+              <span className="hidden sm:inline">Sign Out</span>
+            </button>
           </div>
         </header>
 
@@ -873,6 +1485,49 @@ export default function App() {
                     </button>
                   </div>
 
+                  {/* View Controls: 3D Radar Perspective & Kenya National Extent */}
+                  <div className="flex items-center gap-1.5">
+                    {/* 3D Radar Terrain Perspective Button (Referencing image_02568cc6.png) */}
+                    <button
+                      onClick={() => setShowTerrain3DModal(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-semibold rounded-lg shadow-xs text-xs transition-all cursor-pointer ring-1 ring-emerald-500/30"
+                      title="Open 3D Radar SAR Terrain Perspective matching satellite telemetry disc"
+                    >
+                      <Compass className="w-3.5 h-3.5 animate-spin-slow" />
+                      <span>3D Radar Perspective</span>
+                      <span className="text-[9px] bg-white/20 px-1 py-0.2 rounded font-mono">Disc</span>
+                    </button>
+
+                    {/* Ward Pins Toggle */}
+                    <button
+                      onClick={() => setShowPinsOnMap(!showPinsOnMap)}
+                      className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                        showPinsOnMap
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold shadow-2xs'
+                          : 'bg-white text-slate-600 border-slate-200 hover:text-slate-900'
+                      }`}
+                      title="Toggle realized pin-points for all wards on the map"
+                    >
+                      <MapPin className="w-3.5 h-3.5" />
+                      <span>Pins</span>
+                      <span className="text-[10px] font-bold">{showPinsOnMap ? '✓' : '—'}</span>
+                    </button>
+
+                    {/* Kenya National Inset Toggle */}
+                    <button
+                      onClick={() => setShowKenyaContextInset(!showKenyaContextInset)}
+                      className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                        showKenyaContextInset
+                          ? 'bg-blue-50 text-blue-800 border-blue-300 font-semibold shadow-2xs'
+                          : 'bg-white text-slate-600 border-slate-200 hover:text-slate-900'
+                      }`}
+                      title="Toggle Kenya National Context Inset Map"
+                    >
+                      <Globe className="w-3.5 h-3.5" />
+                      <span>Kenya Inset</span>
+                    </button>
+                  </div>
+
                   {/* County Filter Control with Auto-Bounds */}
                   <div className="flex items-center gap-0.5 p-1 bg-slate-100 rounded-lg text-xs">
                     <button
@@ -913,16 +1568,115 @@ export default function App() {
               <div className="flex items-center justify-between py-2 text-[11px] text-slate-500 border-b border-slate-100">
                 <span className="flex items-center gap-1.5 text-emerald-800 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
                   <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                  Keyless Open GIS Engine Active · Zero Watermarks · Full Kenya Offline Tile Fallbacks
+                  Keyless Open GIS Engine Active · Realized Kenyan Ward Pin-Points & SAR Disc Context
                 </span>
                 <span className="hidden md:inline text-slate-500">
-                  Active Basemap: <strong>{TILE_PROVIDERS[mapTileStyle].name}</strong>
+                  Active Basemap: <strong>{TILE_PROVIDERS[mapTileStyle].name}</strong> · Wards Pin-pointed: <strong>11/11</strong>
                 </span>
               </div>
 
               {/* Map Canvas with Enhanced Fluid Height */}
               <div className="relative mt-2 flex-1 min-h-[520px] lg:min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] rounded-lg border border-slate-200 overflow-hidden">
                 <div ref={mapContainerRef} className="w-full h-full min-h-[520px] lg:min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px]" />
+
+                {/* Kenya National Context Inset Map (Positioned in Top-Left) */}
+                {showKenyaContextInset && (
+                  <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-md p-3 rounded-xl border border-slate-200 shadow-lg text-[11px] z-20 w-64 max-w-[calc(100%-24px)] space-y-2 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm">🇰🇪</span>
+                        <div>
+                          <div className="font-bold text-slate-900 leading-tight">Kenya National Context</div>
+                          <div className="text-[10px] text-slate-500">North Rift Valley Breadbasket</div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setShowKenyaContextInset(false)}
+                        className="text-slate-400 hover:text-slate-600 p-0.5 rounded hover:bg-slate-100"
+                        title="Hide Kenya Inset"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* SVG Geographic Silhouette Map of Kenya */}
+                    <div className="relative w-full h-28 bg-slate-50 rounded-lg border border-slate-200 p-1 flex items-center justify-center overflow-hidden">
+                      <svg viewBox="0 0 200 200" className="w-full h-full">
+                        {/* Kenya National Boundary Silhouette */}
+                        <path
+                          d="M 60,35 L 85,25 L 120,30 L 155,50 L 175,70 L 165,105 L 140,140 L 115,175 L 85,150 L 55,130 L 45,100 L 40,75 L 50,55 Z"
+                          fill="#F1F5F9"
+                          stroke="#94A3B8"
+                          strokeWidth="1.5"
+                        />
+                        {/* Lake Victoria on Western Border */}
+                        <ellipse cx="38" cy="115" rx="14" ry="18" fill="#BAE6FD" stroke="#38BDF8" strokeWidth="1" />
+                        <text x="24" y="118" fontSize="6.5" fill="#0284C7" fontWeight="bold">L. Victoria</text>
+
+                        {/* Indian Ocean on Southeast Coast */}
+                        <path d="M 140,140 Q 155,160 175,190 L 200,190 L 200,130 Z" fill="#E0F2FE" />
+                        <text x="145" y="172" fontSize="6.5" fill="#0284C7" fontWeight="bold">Indian Ocean</text>
+
+                        {/* Equator (0° Lat) Reference Line */}
+                        <line x1="20" y1="108" x2="185" y2="108" stroke="#CBD5E1" strokeWidth="1" strokeDasharray="3,2" />
+                        <text x="148" y="105" fontSize="6" fill="#94A3B8">Equator (0°)</text>
+
+                        {/* Highlighted Target Extent (Trans Nzoia 026 & Uasin Gishu 027) */}
+                        <circle cx="58" cy="85" r="9" fill="#10B981" fillOpacity="0.35" />
+                        <polygon
+                          points="52,78 65,80 63,92 53,90"
+                          fill="#059669"
+                          stroke="#047857"
+                          strokeWidth="1.5"
+                        />
+                        <circle cx="58" cy="85" r="3" fill="#F59E0B" stroke="#B45309" strokeWidth="1" />
+
+                        {/* Callout Indicator to Target Extent */}
+                        <line x1="58" y1="85" x2="92" y2="62" stroke="#059669" strokeWidth="1.2" />
+                        <circle cx="92" cy="62" r="1.5" fill="#059669" />
+                        <rect x="94" y="54" width="76" height="15" rx="3" fill="#064E3B" />
+                        <text x="97" y="65" fontSize="6.5" fill="#FFFFFF" fontWeight="bold">026 & 027 (North Rift)</text>
+
+                        {/* Nairobi Capital City */}
+                        <circle cx="98" cy="122" r="2.5" fill="#475569" />
+                        <text x="103" y="125" fontSize="7" fill="#334155" fontWeight="bold">Nairobi</text>
+                        {/* Mombasa Port City */}
+                        <circle cx="140" cy="165" r="2" fill="#475569" />
+                        <text x="144" y="167" fontSize="6.5" fill="#334155">Mombasa</text>
+                      </svg>
+                    </div>
+
+                    <div className="bg-slate-50 p-2 rounded-lg border border-slate-100 text-[10px] space-y-1">
+                      <div className="flex items-center justify-between text-slate-700">
+                        <span className="font-semibold">Trans Nzoia (026):</span>
+                        <span className="text-emerald-700 font-bold">5 Wards · Kitale Hub</span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-700">
+                        <span className="font-semibold">Uasin Gishu (027):</span>
+                        <span className="text-emerald-700 font-bold">6 Wards · Eldoret Hub</span>
+                      </div>
+                      <div className="text-[9px] text-slate-500 pt-0.5 border-t border-slate-200">
+                        Strategic Grain Reserve: &gt;40% of Kenya national maize production.
+                      </div>
+                    </div>
+
+                    {/* Quick Jump Buttons */}
+                    <div className="flex items-center gap-1.5 pt-0.5">
+                      <button
+                        onClick={zoomToNorthRift}
+                        className="flex-1 py-1 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-semibold transition-colors shadow-2xs text-center"
+                      >
+                        Focus North Rift
+                      </button>
+                      <button
+                        onClick={zoomToKenyaOverview}
+                        className="py-1 px-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded text-[10px] font-medium transition-colors shadow-2xs"
+                      >
+                        All Kenya
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* County Info Overlay Badge */}
                 <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-xs p-2.5 rounded-lg border border-slate-200 shadow-xs text-[11px] z-20 space-y-1 hidden sm:block">
@@ -938,9 +1692,12 @@ export default function App() {
                     <span>Uasin Gishu (027):</span>
                     <span className="font-semibold text-slate-900">6 Wards (Eldoret)</span>
                   </div>
+                  <div className="text-[10px] text-emerald-700 pt-0.5 border-t border-slate-100 font-medium">
+                    11 Wards Pin-pointed on Ground
+                  </div>
                 </div>
 
-                {/* Map Legend Overlay */}
+                {/* Map Legend Overlay with Landmarks */}
                 <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur-xs p-2.5 rounded-lg border border-slate-200 shadow-sm text-[11px] z-20 space-y-1">
                   <div className="font-semibold text-slate-800">Drought Stress Risk Tiers</div>
                   <div className="flex items-center gap-2">
@@ -958,6 +1715,10 @@ export default function App() {
                   <div className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded-xs bg-[#16A34A]"></span>
                     <span>Normal Moisture (Score &lt; 30)</span>
+                  </div>
+                  <div className="pt-1 mt-1 border-t border-slate-100 flex items-center gap-3 text-[10px] text-slate-600">
+                    <span className="flex items-center gap-1"><span>🏛️</span><span>Grain Hubs</span></span>
+                    <span className="flex items-center gap-1"><span>⛰️</span><span>Highland Catchments</span></span>
                   </div>
                 </div>
               </div>
@@ -2052,6 +2813,15 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* TAB 8: IMPACT & REACH METRICS TRACKING DASHBOARD */}
+        {activeTab === 'impact' && <ImpactMetricsView />}
+
+        {/* TAB 9: USER MANAGEMENT MODULE */}
+        {activeTab === 'users' && <UserManagementView />}
+
+        {/* TAB 10: SYSTEM ADMINISTRATION & PRIVILEGE SECURITY MATRIX (RBAC) */}
+        {activeTab === 'admin' && <SystemAdminView />}
       </main>
 
       {/* Footer */}
@@ -2069,5 +2839,6 @@ export default function App() {
       </footer>
       </div>
     </div>
-  );
+  </>
+);
 }
