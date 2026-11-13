@@ -23,7 +23,8 @@ import {
   Bug,
   CalendarCheck,
   BarChart3,
-  Maximize2
+  Maximize2,
+  Globe
 } from 'lucide-react';
 
 export interface UserProfile {
@@ -120,6 +121,77 @@ export default function AuthModal({ isOpen, onClose, currentUser, onLoginSuccess
   const [showHelpChat, setShowHelpChat] = useState<boolean>(false);
   const [signUpNotice, setSignUpNotice] = useState<string | null>(null);
   const [zoomModalOpen, setZoomModalOpen] = useState<boolean>(false);
+  const [activeKenyaWardIdx, setActiveKenyaWardIdx] = useState<number>(0);
+
+  const KENYA_LOGIN_WARDS = [
+    {
+      name: 'Cherangany',
+      county: 'Trans Nzoia (026)',
+      hub: 'Kitale Catchment · 2,420m',
+      stress: 74.5,
+      tier: 'Severe Drought',
+      deficit: '-42%',
+      ndvi: '0.44',
+      leadDays: '17.5d',
+      posClass: 'top-[32%] right-[27%]',
+      dotColor: 'bg-red-500',
+      badgeColor: 'bg-red-600 text-white border-red-700',
+    },
+    {
+      name: 'Endebess',
+      county: 'Trans Nzoia (026)',
+      hub: 'Mt. Elgon Slopes · 2,180m',
+      stress: 58.2,
+      tier: 'Moderate Stress',
+      deficit: '-26%',
+      ndvi: '0.54',
+      leadDays: '19.0d',
+      posClass: 'top-[35%] left-[25%]',
+      dotColor: 'bg-amber-500',
+      badgeColor: 'bg-amber-600 text-white border-amber-700',
+    },
+    {
+      name: 'Kiminini',
+      county: 'Trans Nzoia (026)',
+      hub: 'Southern Maize Belt · 1,860m',
+      stress: 32.0,
+      tier: 'Mild Stress',
+      deficit: '-12%',
+      ndvi: '0.64',
+      leadDays: '21.0d',
+      posClass: 'top-[47%] left-[44%]',
+      dotColor: 'bg-blue-500',
+      badgeColor: 'bg-blue-600 text-white border-blue-700',
+    },
+    {
+      name: 'Moiben',
+      county: 'Uasin Gishu (027)',
+      hub: 'Eldoret Highlands · 2,260m',
+      stress: 78.5,
+      tier: 'Severe Drought',
+      deficit: '-45%',
+      ndvi: '0.41',
+      leadDays: '16.5d',
+      posClass: 'top-[54%] right-[22%]',
+      dotColor: 'bg-red-500',
+      badgeColor: 'bg-red-600 text-white border-red-700',
+    },
+    {
+      name: 'Kapseret',
+      county: 'Uasin Gishu (027)',
+      hub: 'Eldoret Peri-Urban · 2,090m',
+      stress: 38.4,
+      tier: 'Mild Stress',
+      deficit: '-15%',
+      ndvi: '0.61',
+      leadDays: '20.0d',
+      posClass: 'bottom-[32%] left-[52%]',
+      dotColor: 'bg-emerald-500',
+      badgeColor: 'bg-emerald-600 text-white border-emerald-700',
+    },
+  ];
+
+  const activeKenyaWard = KENYA_LOGIN_WARDS[activeKenyaWardIdx];
 
   if (!isOpen) return null;
 
@@ -402,9 +474,68 @@ export default function AuthModal({ isOpen, onClose, currentUser, onLoginSuccess
                 {/* Simulation Image display */}
                 <img
                   src="/assets/light_agro_simulation.jpg"
-                  alt="MavunoSense Earth & Satellite Telemetry Simulation"
+                  alt="MavunoSense Kenya North Rift Valley Earth & Satellite Telemetry Simulation"
                   className="w-full h-auto object-contain max-h-[440px] xl:max-h-[500px] 2xl:max-h-[560px] select-none transition-transform duration-300 group-hover:scale-[1.01]"
                 />
+
+                {/* Realized Kenyan Ward Pin-Points mapped onto the 3D SAR Disc */}
+                {KENYA_LOGIN_WARDS.map((ward, idx) => {
+                  const isActive = activeKenyaWardIdx === idx;
+                  return (
+                    <button
+                      key={ward.name}
+                      type="button"
+                      onClick={() => setActiveKenyaWardIdx(idx)}
+                      className={`hidden sm:flex absolute ${ward.posClass} -translate-x-1/2 -translate-y-1/2 items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border shadow-md transition-all cursor-pointer z-20 ${
+                        isActive
+                          ? `${ward.badgeColor} scale-110 ring-4 ring-white/80`
+                          : 'bg-white/95 text-slate-800 border-slate-300 hover:scale-105'
+                      }`}
+                      title={`${ward.name} Ward · ${ward.county} · Stress ${ward.stress}/100`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white animate-ping' : ward.dotColor}`} />
+                      <span>{ward.name}</span>
+                      <span className={`text-[8px] px-1 rounded font-mono ${isActive ? 'bg-black/25 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                        {Math.round(ward.stress)}
+                      </span>
+                    </button>
+                  );
+                })}
+
+                {/* Compact Kenya National Context Inset (Top-Right below Zoom) */}
+                <div className="hidden lg:flex flex-col absolute top-12 right-3 bg-white/95 backdrop-blur-xs p-2 rounded-xl border border-slate-200/90 shadow-md z-10 w-36">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-1 mb-1">
+                    <span className="text-[9px] font-bold text-slate-900 flex items-center gap-1">
+                      <Globe className="w-2.5 h-2.5 text-emerald-600" />
+                      <span>Kenya Context</span>
+                    </span>
+                    <span className="text-[8px] font-semibold text-emerald-700 bg-emerald-50 px-1 rounded">026 · 027</span>
+                  </div>
+                  <svg viewBox="0 0 120 120" className="w-full h-20 bg-slate-50/80 rounded-lg border border-slate-100">
+                    {/* Kenya Silhouette */}
+                    <path
+                      d="M 35,20 L 52,14 L 74,17 L 95,30 L 106,44 L 100,66 L 84,88 L 69,108 L 50,92 L 32,79 L 26,60 L 23,44 L 29,32 Z"
+                      fill="#F1F5F9"
+                      stroke="#94A3B8"
+                      strokeWidth="1.4"
+                    />
+                    {/* Lake Victoria */}
+                    <ellipse cx="22" cy="70" rx="8" ry="11" fill="#BAE6FD" stroke="#38BDF8" strokeWidth="0.8" />
+                    {/* Equator */}
+                    <line x1="12" y1="65" x2="112" y2="65" stroke="#CBD5E1" strokeWidth="0.8" strokeDasharray="2,2" />
+                    {/* Trans Nzoia & Uasin Gishu Breadbasket Highlight */}
+                    <circle cx="35" cy="51" r="7" fill="#10B981" fillOpacity="0.3" />
+                    <polygon points="31,46 39,47 38,56 32,55" fill="#059669" stroke="#047857" strokeWidth="1" />
+                    <circle cx="35" cy="51" r="2" fill="#F59E0B" />
+                    <text x="44" y="49" fontSize="5.5" fill="#065F46" fontWeight="bold">North Rift</text>
+                    {/* Nairobi */}
+                    <circle cx="60" cy="74" r="2" fill="#334155" />
+                    <text x="64" y="76" fontSize="5.5" fill="#334155" fontWeight="bold">Nairobi</text>
+                  </svg>
+                  <div className="mt-1 text-[8px] text-slate-600 flex items-center justify-between">
+                    <span>Trans Nzoia & Uasin Gishu</span>
+                  </div>
+                </div>
 
                 {/* Fullscreen Zoom Action Button */}
                 <button
@@ -416,22 +547,22 @@ export default function AuthModal({ isOpen, onClose, currentUser, onLoginSuccess
                   <Maximize2 className="w-3.5 h-3.5" />
                 </button>
 
-                {/* Interactive Telemetry Overlay Badges */}
+                {/* Interactive Telemetry Overlay Badges (Contextualized to Kenya) */}
                 <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-xs px-2.5 py-1.5 rounded-lg border border-emerald-200 shadow-2xs text-[10px] flex items-center gap-2 text-slate-700 z-10">
                   <Layers className="w-3.5 h-3.5 text-emerald-600" />
-                  <span className="font-semibold text-slate-900">Crop Health & Stress</span>
+                  <span className="font-semibold text-slate-900">Kenya North Rift Maize</span>
                   <span className="text-emerald-700 font-bold">AUC 0.791</span>
                 </div>
 
                 <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur-xs px-2.5 py-1.5 rounded-lg border border-amber-200 shadow-2xs text-[10px] flex items-center gap-1.5 text-amber-800 z-10">
                   <AlertCircle className="w-3 h-3 text-red-500" />
-                  <span className="font-bold">Moisture Deficit: -42%</span>
-                  <span className="text-slate-500">17.5d Early Warning</span>
+                  <span className="font-bold">{activeKenyaWard.name}: {activeKenyaWard.deficit} Rain</span>
+                  <span className="text-slate-500 hidden sm:inline">· {activeKenyaWard.leadDays} Lead ({activeKenyaWard.county})</span>
                 </div>
 
                 <div className="absolute bottom-3 right-3 bg-white/95 backdrop-blur-xs px-2.5 py-1.5 rounded-lg border border-emerald-200 shadow-2xs text-[10px] flex items-center gap-1.5 text-emerald-800 z-10">
                   <Check className="w-3 h-3 text-emerald-600 font-bold" />
-                  <span className="font-bold">VRA & Scout Log:</span>
+                  <span className="font-bold">11 Wards ·</span>
                   <span className="text-slate-600">KDPA 2019 Anonymized</span>
                 </div>
               </div>

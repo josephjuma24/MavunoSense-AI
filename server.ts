@@ -19,7 +19,14 @@ import fs from 'fs';
 import path from 'path';
 
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const PORT =
+  process.env.NODE_ENV === 'production'
+    ? process.env.PORT
+      ? parseInt(process.env.PORT, 10)
+      : 3000
+    : process.env.PORT && process.env.PORT !== process.env.NGINX_PORT
+    ? parseInt(process.env.PORT, 10)
+    : Number(process.env.DEFAULT_APP_PORT || 3000);
 
 app.use(express.json());
 
@@ -1991,7 +1998,11 @@ app.get('/api/v1/python-source', (req: Request, res: Response) => {
 async function start() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR !== 'true',
+        ws: process.env.DISABLE_HMR !== 'true' ? undefined : false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
